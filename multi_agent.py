@@ -7,9 +7,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from typing import Any
 from langchain_core.tools import Tool
 from functools import lru_cache
+# from litellm import retry
 from playwright.sync_api import sync_playwright
 import google.generativeai as genai
 import os
+
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from crawl_test import crawl_website
 
@@ -26,7 +29,7 @@ llm = ChatGroq(
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def gemini_llm(query: str) -> str:
     """
     Generates detailed and structured content for a given query using the Gemini LLM.
@@ -102,7 +105,7 @@ def scrape_url(website: str) -> Any:
 prompt = ChatPromptTemplate.from_messages([
     (
         "system",
-        """You are a thorough research assistant that MUST follow this exact workflow for EVERY query:
+        """You are a thorough research assistant and an expert professional course creator and educational content developer that MUST follow this exact workflow for EVERY query:
 
 1. REQUIRED FIRST STEP: Use the DuckDuckGo Search tool to find at least 3-5 relevant URLs about the topic.
 
@@ -184,7 +187,7 @@ if USE_HARDCODED_PROMPT:
     # """
     # prompt_text="""give me detailed structure of learning path of Cloud Computing. Scrape the relevant websites to get the content , understand them, categorize all the concepts in digestable modules which are ordered from beginner level to advanced level."""
     prompt_text = """
-Find information about React Native for mobile development, summarize it, and provide a structured learning path. Use the DuckDuckGo Search tool to find relevant articles, the Crawl Website tool to extract content, and the Gemini LLM tool to summarize and structure the information.
+Find information about React Native for mobile development, summarize it, and provide a structured course. Use the DuckDuckGo Search tool to find relevant articles, the Crawl Website tool to extract content, and the Gemini LLM tool to summarize and structure the information.
 """
 else:
     prompt_text = get_multiline_input()
