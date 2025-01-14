@@ -1,3 +1,5 @@
+import json
+from groq import APIError
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_groq import ChatGroq
@@ -12,7 +14,7 @@ from playwright.sync_api import sync_playwright
 import google.generativeai as genai
 import os
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from crawl_test import crawl_website
 
@@ -29,7 +31,8 @@ llm = ChatGroq(
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+# @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+# 
 def gemini_llm(query: str) -> str:
     """
     Generates detailed and structured content for a given query using the Gemini LLM.
@@ -42,27 +45,65 @@ def gemini_llm(query: str) -> str:
     """
     model = genai.GenerativeModel(
         model_name="gemini-2.0-flash-exp",
-        system_instruction="""You are a highly detailed and thorough research assistant. When providing information:
-        - Always verify information across multiple sources
-        - Provide structured, comprehensive answers
-        - Include specific examples and code snippets when relevant
-        - Cross-reference all information
-        - Format output consistently using proper markdown
-        - Always cite sources inline as well as in references
-        - Be concise and clear in your language
+        system_instruction="""You are a professional course creator and educational content developer. Your task is to:
+1. Generate detailed and structured courses for any topic.
+2. Organize the content into modules and submodules.
+3. Include examples, references, and practical applications.
+4. STrict instruction : Format the output with the following structure (an object but dont include backticks in the beginning or in the end because its causing errors here."):
+
+{
+  "course": "Course Title",
+  "categories": [
+    {
+      "name": "Category Name",
+      "subcategories": [
+        {
+          "name": "Subcategory Name",
+          "content": "Detailed content for this subcategory."
+        }
+      ]
+    }
+  ]
+}
         - When reciting copy-righted materials please just understand the content and then give the interpreted content of the data. Paraphrase the key points in your own words, ensuring that the original meaning is preserved. Include proper attribution to the original source.
         """
     )
 
     chat = model.start_chat(history=[])
-    response = chat.send_message("Provide detailed content for this: " + query, stream=True)
+    response = chat.send_message("Provide detailed explanation for the information given here such that it resembles a course with proper content that students can read and be knowledgable : " + query, stream=True)
+    response_text = ""
     for chunk in response:
-        print(chunk.text, end="")
-
-    print(chat.history)
-    import time
-    time.sleep(2)  # Wait for 2 seconds before exiting
-
+        response_text += chunk.text
+        
+    cleaned_text = response_text.strip()
+    print("Cleaned Response : ",cleaned_text)
+    
+    # Remove any markdown formatting if present
+    if "```" in cleaned_text:
+        # Remove everything before the first {
+        cleaned_text = cleaned_text[cleaned_text.find("{"):cleaned_text.rfind("}") + 1]
+    
+    try:
+        # Validate JSON
+        course_data = json.loads(cleaned_text)
+        
+        # Optional: Print the structure (can be removed if not needed)
+        print("\nCourse Structure:")
+        print("Course Title:", course_data["course"])
+        for category in course_data["categories"]:
+            print(f"\nModule: {category['name']}")
+            for subcategory in category["subcategories"]:
+                print(f"  Topic: {subcategory['name']}")
+                
+        return cleaned_text
+        
+    except json.JSONDecodeError as e:
+        print(f"Failed to parse JSON: {e}")
+        print("Response Text that failed to parse:", cleaned_text)
+        raise
+    
+    
+    
 def searchDuckDuckGo(query: str) -> Any:
     """
     Searches the web using DuckDuckGo and returns a list of relevant search results.
@@ -121,7 +162,7 @@ IMPORTANT RULES:
 - Track which URLs you've already crawled to avoid duplicates
 - Before giving your final answer, verify you've used all three tools
 
-For learning paths specifically:
+For Course generation or learning path generation specifically:
 - Use DuckDuckGo to find curriculum examples from multiple institutions
 - Crawl each curriculum page to extract detailed module structures
 - Use Gemini to organize and standardize the content into a clear learning path
@@ -187,25 +228,30 @@ if USE_HARDCODED_PROMPT:
     # """
     # prompt_text="""give me detailed structure of learning path of Cloud Computing. Scrape the relevant websites to get the content , understand them, categorize all the concepts in digestable modules which are ordered from beginner level to advanced level."""
     prompt_text = """
-Find information about React Native for mobile development, summarize it, and provide a structured course. Use the DuckDuckGo Search tool to find relevant articles, the Crawl Website tool to extract content, and the Gemini LLM tool to summarize and structure the information.
+Find information about Devops from beginner to advanced, summarize it, and provide a structured course. Use the DuckDuckGo Search tool to find relevant articles, the Crawl Website tool to extract content, and the Gemini LLM tool to summarize and structure the information.
 """
 else:
     prompt_text = get_multiline_input()
 
 # Execute the agent
-answer = agent_executor.invoke({"input": prompt_text})
+# @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 
-# Print the tools used by the agent
-print("\nTools Used by the Agent:")
-for step in answer["intermediate_steps"]:
-    tool_name = step[0].tool  # The tool used
-    tool_input = step[0].tool_input  # The input passed to the tool
-    tool_output = step[1]  # The output from the tool
-    print(f"- Tool: {tool_name}")
-    print(f"  Input: {tool_input}")
-    print(f"  Output: {tool_output}\n")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type(APIError)  # Retry only if APIError is raised
+)
+def execute_agent(prompt_text):
+    return agent_executor.invoke({"input": prompt_text})
 
-print("\nResponse:")
-gemini_llm(answer['output'])
+try:
+    answer = execute_agent(prompt_text)
+except APIError as e:
+    print(f"Failed to execute agent after retries: {e}")
+else:
+    print("\nResponse:")
+    gemini_llm(answer['output'])
 
-print("Tools in the tool belt : ",agent_executor.tools)
+# print("Tools in the tool belt : ",agent_executor.tools)
+
+

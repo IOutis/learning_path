@@ -7,32 +7,33 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from dotenv import load_dotenv
 from langchain_core.tools import tool
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Load environment variables from .env file
 load_dotenv()
 
-class Learning_Path(BaseModel):
+class Course_Data(BaseModel):
     module: str
     concepts: List[str]  # List of concepts for a single module
 
-class Learning_PathResponse(BaseModel):
-    learning_paths: List[Learning_Path]
+class Course_DataResponse(BaseModel):
+    course_data: List[Course_Data]
 
 async def crawl_website_async(website: str) -> Any:
     """
-    Asynchronously crawls a website and extracts structured learning paths and concepts using an LLM extraction strategy.
+    Asynchronously crawls a website and concepts using an LLM extraction strategy and categorizes them into digestable modules to make a detailed course structure from beginner to advanced
     
     Args:
         website (str): The URL of the website to crawl.
     
     Returns:
-        Any: A list of dictionaries containing the extracted learning paths and concepts.
+        Any: A list of dictionaries containing the extracted modules and relevant concepts.
     """
     # 1. Define the LLM extraction strategy
     llm_strategy = LLMExtractionStrategy(
         provider="gemini/gemini-2.0-flash-exp",            # e.g. "ollama/llama2"
         api_token=os.getenv('GEMINI_API_KEY'),
-        schema=Learning_PathResponse.model_json_schema(),  # Updated schema
+        schema=Course_DataResponse.model_json_schema(),  # Updated schema
         extraction_type="schema",
         instruction="Extract all concepts and categorize them into digestible modules. Each module should include a list of related concepts.",
         chunk_token_threshold=4000,
@@ -74,6 +75,8 @@ async def crawl_website_async(website: str) -> Any:
         except Exception as e:
             return {"error": f"An error occurred: {e}"}
 
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def crawl_website(website: str) -> Any:
     """
     Synchronous wrapper for the async crawl_website function.
