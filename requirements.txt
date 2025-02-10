@@ -6,3 +6,16 @@ beautifulsoup4
 lxml 
 html5lib
 python-dotenv
+Crawl4AI
+duckduckgo-search
+groq 
+langchain 
+langchain-community 
+langchain-groq
+torch
+transformers
+einops 
+transformers_stream_generator
+huggingface_hub
+google-genai
+google-generativeai
